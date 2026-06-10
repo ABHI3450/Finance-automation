@@ -45,9 +45,80 @@ An intelligent, dual-architecture financial intelligence platform engineered to 
 ## 🚀 Getting Started
 
 ### Option A: Running the Next.js Frontend App
-
-1. Ensure you have Node.js installed. Navigate to the frontend project directory:
+### Frontend Startup
+```
+Install dependencies:
+```
+1.Ensure you have Node.js installed. Navigate to the frontend project directory:
    ```bash
    npm install
+   ```
+2.Run development server:
+```
+npm run dev
+```
+### Open your browser:
+```bash
+http://localhost:3000
+```
+## backend
+```
+cd server
 
-   
+npm install
+```
+## Configure Environment Variables
+
+### Create .env.local
+```
+OPENAI_API_KEY=your_key
+
+FIREBASE_API_KEY=your_key
+
+FIREBASE_PROJECT_ID=your_project
+
+FIREBASE_STORAGE_BUCKET=your_bucket
+
+FIREBASE_AUTH_DOMAIN=your_domain
+```
+## Run Frontend
+```
+npm run dev
+```
+
+## Run Backend
+
+```
+npm start
+```   
+## Usage
+### Upload Financial Reports
+### Supported formats:
+
+1- PDF
+2- Annual Reports
+3- Financial Statement
+## Ask Questions
+### Examples:
+```
+What is the company's revenue?
+
+Summarize this annual report.
+
+What risks are highlighted?
+
+What is the debt-to-equity ratio?
+
+Show the key financial metrics.
+```
+
+## Future Improvements
+### 1 - Real-time stock market integration
+### 2 - Financial forecasting using AI
+### 3 -Automated investment recommendations
+### 4 - Portfolio analysis
+### 5 - Multi-company comparison
+### 6 - SEC filing analysis
+### 7 - Earnings call transcript analysis
+### 8 - AI-powered financial dashboard
+### 9 - Predictive analytics models

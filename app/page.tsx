@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo, useState, useRef, useEffect } from "react";
+import jsPDF from "jspdf";
+import { toCanvas } from "html-to-image";
 
 type Transaction = {
   date: string;
@@ -47,6 +49,7 @@ export default function Home() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResult, setAiResult] = useState("");
   const [aiPrompt, setAiPrompt] = useState("");
+  const [customQuery, setCustomQuery] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileName, setProfileName] = useState("");
   const [profileEmail, setProfileEmail] = useState("");
@@ -112,6 +115,45 @@ export default function Home() {
 
   const formatAmount = (n: number) =>
     new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(n);
+  
+  const downloadPDF = async () => {
+    if (rows.length === 0) return alert("No data to export!");
+    
+    // 1. Remember what tab we are on, then secretly switch to Overview
+    const currentTab = activeNav;
+    setActiveNav("Overview");
+
+    // 2. Give the browser a split-second (300ms) to render the Overview page
+    setTimeout(async () => {
+      const dashboardElement = document.getElementById("dashboard-main");
+      if (!dashboardElement) {
+        setActiveNav(currentTab); // Revert if failed
+        return;
+      }
+
+      try {
+        const canvas = await toCanvas(dashboardElement, {
+          backgroundColor: "#080b14",
+          pixelRatio: 2, // High resolution
+        });
+        
+        const imgData = canvas.toDataURL("image/png");
+        const pdf = new jsPDF("p", "mm", "a4");
+        
+        const pdfWidth = pdf.internal.pageSize.getWidth();
+        const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+        
+        pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
+        pdf.save("Finance_Summary.pdf");
+      } catch (err) {
+        console.error("Failed to generate PDF", err);
+        alert("Something went wrong generating the PDF.");
+      } finally {
+        // 3. Switch back to the tab the user was originally on!
+        setActiveNav(currentTab);
+      }
+    }, 300);
+  };
 
   // Category totals for Analytics
   const catTotals = useMemo(() => {
@@ -123,7 +165,54 @@ export default function Home() {
     return Object.entries(m).sort((a, b) => b[1] - a[1]);
   }, [rows]);
 
+  //weelly trend
+
+const weeklyTrend = useMemo(() => {
+    if (rows.length === 0) {
+      return [
+        { day: "Mon", amount: 0, h: 10, highlight: false }, 
+        { day: "Tue", amount: 0, h: 10, highlight: false },
+        { day: "Wed", amount: 0, h: 10, highlight: false }, 
+        { day: "Thu", amount: 0, h: 10, highlight: false },
+        { day: "Fri", amount: 0, h: 10, highlight: false }, 
+        { day: "Sat", amount: 0, h: 10, highlight: false },
+        { day: "Sun", amount: 0, h: 10, highlight: false },
+      ];
+    }
+
+    const totals = [0, 0, 0, 0, 0, 0, 0]; // Mon through Sun
+    const dayMap = [6, 0, 1, 2, 3, 4, 5]; 
+
+    rows.forEach(r => {
+      if (!r.date) return;
+      const parts = r.date.includes("-") ? r.date.split("-") : r.date.split("/");
+      let d;
+      if (parts[0].length === 4) {
+        d = new Date(r.date); 
+      } else {
+        d = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`); 
+      }
+      
+      if (isNaN(d.getTime())) return;
+      totals[dayMap[d.getDay()]] += r.amount;
+    });
+
+    const max = Math.max(...totals) || 1;
+    const labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+    return totals.map((amt, i) => {
+      const h = Math.max(10, Math.round((amt / max) * 70));
+      return {
+        day: labels[i],
+        amount: amt,
+        h,
+        highlight: amt === max && amt > 0
+      };
+    });
+  }, [rows]);
+
   // AI Insight call
+ // AI Insight call
   const runAI = async (prompt: string) => {
     setAiPrompt(prompt);
     setAiResult("");
@@ -134,23 +223,20 @@ export default function Home() {
       : "The user has not uploaded any transactions yet.";
 
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+      const res = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          system: "You are a smart financial advisor AI inside a finance dashboard. Be concise, friendly, and actionable. Use bullet points. Keep replies under 120 words.",
-          messages: [
-            { role: "user", content: `${context}\n\nUser question: ${prompt}` }
-          ],
-        }),
+        body: JSON.stringify({ prompt, context }),
       });
+      
       const data = await res.json();
-      const text = data?.content?.[0]?.text ?? "No response received.";
-      setAiResult(text);
-    } catch {
+      
+      if (!res.ok) throw new Error(data.error);
+      
+      setAiResult(data.text);
+    } catch (err) {
       setAiResult("Unable to connect to AI. Please try again.");
+      console.error(err);
     } finally {
       setAiLoading(false);
     }
@@ -287,7 +373,7 @@ export default function Home() {
         </div>
       </nav>
 
-      <div className="mx-auto max-w-[1280px] px-10">
+      <div id="dashboard-main" className="mx-auto max-w-[1280px] px-10">
 
         {/* ══════════════════════════════════════════
             PAGE: OVERVIEW
@@ -465,50 +551,97 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* Weekly Trend */}
+               {/* Weekly Trend (Dynamic) */}
                 <div className="glass-card" style={{ padding: "22px 24px" }}>
                   <p className="section-label mb-5">Weekly Trend</p>
                   <div className="flex items-end gap-2" style={{ height: "80px" }}>
-                    {[
-                      { day: "Mon", h: 42 }, { day: "Tue", h: 67 }, { day: "Wed", h: 35 },
-                      { day: "Thu", h: 90, highlight: true }, { day: "Fri", h: 55 },
-                      { day: "Sat", h: 28 }, { day: "Sun", h: 48 },
-                    ].map(({ day, h, highlight }) => (
-                      <div key={day} className="flex-1 flex flex-col items-center gap-2">
+                    {weeklyTrend.map(({ day, h, highlight, amount }) => (
+                      <div 
+                        key={day} 
+                        className="flex-1 flex flex-col items-center gap-2 group relative cursor-pointer"
+                        title={`Spent: ₹${formatAmount(amount)}`}
+                      >
+                        {/* Tooltip on hover */}
+                        <div className="absolute -top-7 opacity-0 group-hover:opacity-100 transition-opacity bg-gray-900 text-[10px] py-1 px-2 rounded border border-white/10 whitespace-nowrap z-10 pointer-events-none">
+                          ₹{formatAmount(amount)}
+                        </div>
+                        
                         <div
-                          className="w-full rounded-t-[5px] rounded-b-[3px] transition-all hover:opacity-80"
+                          className="w-full rounded-t-[5px] rounded-b-[3px] transition-all hover:opacity-100"
                           style={{
                             height: `${h}px`,
-                            background: highlight ? "rgba(79,110,247,0.55)" : "rgba(79,110,247,0.2)",
-                            border: `0.5px solid ${highlight ? "rgba(79,110,247,0.7)" : "rgba(79,110,247,0.3)"}`,
+                            background: highlight ? "rgba(79,110,247,0.65)" : "rgba(79,110,247,0.15)",
+                            border: `0.5px solid ${highlight ? "rgba(79,110,247,0.8)" : "rgba(79,110,247,0.25)"}`,
                           }}
                         />
-                        <span className="text-[10px] text-white/25">{day}</span>
+                        <span className={`text-[10px] ${highlight ? "text-[#7b9bff] font-medium" : "text-white/25"}`}>{day}</span>
                       </div>
                     ))}
                   </div>
                 </div>
 
-                {/* AI Insights — WORKING */}
+                {/* AI Insights — INTERACTIVE */}
                 <div className="glass-card" style={{ padding: "22px 24px" }}>
-                  <p className="section-label mb-4">AI Insights</p>
+                  <p className="section-label mb-4">Ask Financial AI</p>
 
-                  {AI_PROMPTS.map((prompt) => (
-                    <div
-                      key={prompt}
-                      className="ai-chip"
-                      style={{ marginBottom: 10 }}
-                      onClick={() => runAI(prompt)}
+                  {/* Quick click options */}
+                  <div className="mb-4">
+                    {AI_PROMPTS.map((prompt) => (
+                      <div
+                        key={prompt}
+                        className="ai-chip"
+                        style={{ marginBottom: 8 }}
+                        onClick={() => runAI(prompt)}
+                      >
+                        <span className="text-[#7b9bff] text-[12px] flex-shrink-0">✦</span>
+                        <span className="text-[12px] text-white/55">{prompt}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Interactive Search Box */}
+                  <form 
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (!customQuery.trim()) return;
+                      runAI(customQuery);
+                      setCustomQuery("");
+                    }}
+                    className="flex gap-2 mb-4"
+                  >
+                    <input
+                      type="text"
+                      placeholder="Ask AI about your expenses..."
+                      value={customQuery}
+                      onChange={(e) => setCustomQuery(e.target.value)}
+                      className="tx-search"
+                      style={{ width: "100%", fontSize: "12px" }}
+                      disabled={aiLoading}
+                    />
+                    <button
+                      type="submit"
+                      disabled={aiLoading || !customQuery.trim()}
+                      style={{
+                        padding: "0 14px",
+                        background: "rgba(79,110,247,0.15)",
+                        border: "1px solid rgba(79,110,247,0.35)",
+                        borderRadius: "10px",
+                        color: "#7b9bff",
+                        cursor: "pointer",
+                        fontSize: "12px",
+                        fontFamily: "inherit",
+                        transition: "all 0.2s"
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = "rgba(79,110,247,0.25)"}
+                      onMouseLeave={e => e.currentTarget.style.background = "rgba(79,110,247,0.15)"}
                     >
-                      <span className="text-[#7b9bff] text-[14px] flex-shrink-0">✦</span>
-                      <span className="text-[13px] text-white/55">{prompt}</span>
-                    </div>
-                  ))}
+                      Ask
+                    </button>
+                  </form>
 
                   {/* Result box */}
                   {(aiLoading || aiResult) && (
                     <div style={{
-                      marginTop: 14,
                       background: "rgba(79,110,247,0.07)",
                       border: "0.5px solid rgba(79,110,247,0.2)",
                       borderRadius: 12,
@@ -524,13 +657,13 @@ export default function Home() {
                             flexShrink: 0,
                           }} />
                           <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
-                            Analysing your transactions…
+                            Analyzing transactions…
                           </span>
                         </div>
                       ) : (
                         <>
                           <p style={{ fontSize: 10, color: "rgba(79,110,247,0.8)", fontWeight: 600, letterSpacing: 1, marginBottom: 8, textTransform: "uppercase" }}>
-                            ✦ {aiPrompt}
+                            ✦ Query: {aiPrompt}
                           </p>
                           <p style={{ fontSize: 12, color: "rgba(255,255,255,0.65)", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
                             {aiResult}
@@ -540,7 +673,6 @@ export default function Home() {
                     </div>
                   )}
                 </div>
-
                 {/* Quick Stats */}
                 {rows.length > 0 && (
                   <div className="glass-card" style={{ padding: "22px 24px" }}>
@@ -695,14 +827,31 @@ export default function Home() {
 
             <div className="glass-card">
               {[
-                { icon: "ti-file-analytics", color: "#7b9bff", bg: "rgba(79,110,247,0.15)", name: "Monthly Spending Summary", meta: "Auto-generated · PDF" },
-                { icon: "ti-chart-pie", color: "#c4b5fd", bg: "rgba(139,92,246,0.15)", name: "Category Analysis Report", meta: "Breakdown by category · PDF" },
-                { icon: "ti-alert-triangle", color: "#fb7185", bg: "rgba(244,63,94,0.12)", name: "Anomaly & Fraud Alert Report", meta: `${alerts.length} alerts flagged` },
-                { icon: "ti-download", color: "#6ee7b7", bg: "rgba(52,211,153,0.1)", name: "Export Transactions (CSV)", meta: `${rows.length} transactions ready` },
-              ].map(({ icon, color, bg, name, meta }) => (
+                { 
+                  icon: "ti-file-analytics", color: "#7b9bff", bg: "rgba(79,110,247,0.15)", 
+                  name: "Monthly Spending Summary", meta: "Auto-generated · PDF", 
+                  action: downloadPDF
+                },
+                { 
+                  icon: "ti-chart-pie", color: "#c4b5fd", bg: "rgba(139,92,246,0.15)", 
+                  name: "Category Analysis Report", meta: "Breakdown by category · PDF",
+                  action: () => alert("Coming soon!") 
+                },
+                { 
+                  icon: "ti-alert-triangle", color: "#fb7185", bg: "rgba(244,63,94,0.12)", 
+                  name: "Anomaly & Fraud Alert Report", meta: `${alerts.length} alerts flagged`,
+                  action: () => alert("Coming soon!") 
+                },
+                { 
+                  icon: "ti-download", color: "#6ee7b7", bg: "rgba(52,211,153,0.1)", 
+                  name: "Export Transactions (CSV)", meta: `${rows.length} transactions ready`,
+                  action: downloadPDF
+                },
+              ].map(({ icon, color, bg, name, meta, action }) => (
                 <div
                   key={name}
-                  className="flex items-center gap-5 border-b border-white/[0.05] transition-all cursor-pointer hover:bg-white/[0.02]"
+                  onClick={action}
+                  className="flex items-center gap-5 border-b border-white/[0.05] transition-all cursor-pointer hover:bg-white/[0.05]"
                   style={{ padding: "20px 28px" }}
                 >
                   <div style={{ width: 42, height: 42, borderRadius: 12, background: bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 18, color }}>
@@ -712,7 +861,9 @@ export default function Home() {
                     <p className="text-[14px] font-medium text-white/85">{name}</p>
                     <p className="text-[12px] text-white/30 mt-1">{meta}</p>
                   </div>
-                  <span className="badge badge-ok">Ready</span>
+                  <span className={`badge ${rows.length > 0 ? 'badge-ok' : 'bg-white/10 text-white/40'}`}>
+                    {rows.length > 0 ? 'Ready' : 'No Data'}
+                  </span>
                 </div>
               ))}
             </div>
